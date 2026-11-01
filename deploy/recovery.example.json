@@ -1,0 +1,9 @@
+{
+  "recovery_ssid": "furbo2",
+  "recovery_password": "furbo2setup",
+  "reset_pressed_value": "1",
+  "ntp_servers": [
+    "time.cloudflare.com",
+    "time.google.com"
+  ]
+}

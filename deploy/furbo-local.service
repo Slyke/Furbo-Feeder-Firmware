@@ -1,0 +1,20 @@
+[Unit]
+Description=Furbo local API, MQTT and browser interface
+Requires=furbo-hardware.service
+After=furbo-hardware.service
+ConditionPathExists=/usr/local/furbo-local/data/state.json
+[Service]
+Type=simple
+User=www-data
+Group=33
+ExecStart=/usr/local/furbo-local/bin/furbo-local serve /usr/local/furbo-local/etc/config.json
+WorkingDirectory=/usr/local/furbo-local
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=full
+ReadWriteDirectories=/usr/local/furbo-local/data /dev/adc/furbo-local/media
+[Install]
+WantedBy=multi-user.target

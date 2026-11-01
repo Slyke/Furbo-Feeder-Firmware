@@ -1,0 +1,12 @@
+# Started by boot-local-services.sh after factory initialization.
+[Unit]
+Description=Furbo station and protected recovery Wi-Fi
+[Service]
+Type=simple
+ExecStart=/usr/local/furbo-local/bin/furbo-local network
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+ExecStopPost=-/sbin/ifconfig wlan0 down
+ExecStopPost=-/sbin/modprobe -r cywdhd
+UMask=0077

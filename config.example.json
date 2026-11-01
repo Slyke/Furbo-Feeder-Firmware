@@ -1,0 +1,68 @@
+{
+  "device_id": "furbo",
+  "serial_number": null,
+  "data_dir": "./data",
+  "hardware_socket": "/run/furbo-local/hardware.sock",
+  "simulate": true,
+  "timezone": "UTC",
+  "http": {
+    "listen": "127.0.0.1:8080",
+    "allow_insecure_lan": false,
+    "https_listen": "0.0.0.0:8443",
+    "certificate": "./data/server.crt",
+    "private_key": "./data/server.key",
+    "max_connections": 4,
+    "http_enabled": true,
+    "https_enabled": true
+  },
+  "mqtt": {
+    "enabled": false,
+    "host": "mqtt.example.invalid",
+    "port": 8883,
+    "tls": true,
+    "ca_file": null,
+    "certificate_name": null,
+    "client_certificate": null,
+    "client_key": null,
+    "username": null,
+    "password": null,
+    "password_file": null,
+    "topic_prefix": "furbo/device",
+    "max_command_age_seconds": 60,
+    "allow_self_signed": false
+  },
+  "media": {
+    "directory": null,
+    "max_bytes": 8388608,
+    "max_files": 24,
+    "auto_upload": false,
+    "upload_url": null,
+    "upload_token_file": null,
+    "webhook_url": null,
+    "webhook_secret_file": null,
+    "ca_file": null,
+    "retention_days": 0,
+    "min_free_bytes": 8388608,
+    "allow_self_signed": false,
+    "webhook_allow_self_signed": false,
+    "webhook_events": []
+  },
+  "detection": {
+    "motion": false,
+    "sound": false,
+    "interval_seconds": 20,
+    "motion_threshold": 0.12,
+    "sound_threshold": 0.12,
+    "cooldown_seconds": 60,
+    "capture_on_event": false
+  },
+  "camera": {
+    "overlay_text": "",
+    "show_timestamp": true
+  },
+  "watchdog": {
+    "audio_cpu_percent": 50,
+    "rtsp_cpu_percent": 50,
+    "consecutive_readings": 24
+  }
+}

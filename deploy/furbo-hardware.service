@@ -1,0 +1,11 @@
+[Unit]
+Description=Furbo restricted hardware helper
+After=cec_image.service
+[Service]
+Type=simple
+ExecStart=/usr/local/furbo-local/bin/furbo-local hardware /run/furbo-local/hardware.sock 33 33
+Restart=on-failure
+RestartSec=3
+UMask=0077
+[Install]
+WantedBy=multi-user.target

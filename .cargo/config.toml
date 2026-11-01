@@ -1,0 +1,7 @@
+[target.armv7-unknown-linux-musleabihf]
+linker = "rust-lld"
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[env]
+CC_armv7_unknown_linux_musleabihf = { value = "scripts/arm-cc.sh", relative = true }
+AR_armv7_unknown_linux_musleabihf = { value = "scripts/arm-ar.sh", relative = true }

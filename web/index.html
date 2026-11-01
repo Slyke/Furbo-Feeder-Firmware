@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Furbo Local</title><link rel="stylesheet" href="/style.css"><script defer src="/i18n.js"></script><script defer src="/app.js"></script></head>
+<body>
+<div class="language-control"><button id="menu-toggle" class="top-icon menu-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button><button id="theme-toggle" class="top-icon" aria-label="Switch to dark mode">☾</button><svg class="language-symbol" aria-hidden="true" viewBox="0 0 28 26"><path d="M2 3h15v15H2zM12 10h14v14H12z" fill="none" stroke="currentColor" stroke-width="1.2"/><text x="5" y="14" font-size="12">A</text><text x="14" y="21" font-size="10">文</text></svg><label for="language-select">Language</label><select id="language-select" aria-label="Language"><option value="en-US">English</option><option value="zh-CN">简体中文</option></select></div>
+<div id="login" class="login-wrap">
+  <form id="login-form" class="login-card">
+    <div class="mark">f.</div><h1>Furbo Local</h1><p class="muted">Connect to your device. Everything stays under your control.</p>
+    <label>Username<input id="username" autocomplete="username" value="admin" maxlength="40"></label>
+    <label>Password<input id="password" type="password" autocomplete="current-password" maxlength="128"></label>
+    <details><summary>Use an API key</summary><label>API key<input id="api-key" type="password" autocomplete="off"></label></details>
+    <button type="submit" class="primary">Connect</button><p id="login-error" role="alert"></p>
+    <p class="small muted">Use HTTPS when sending credentials. Recovery Wi-Fi: open <strong>https://192.168.42.1:8443</strong> and sign in with your local account.</p>
+  </form>
+  <form id="setup-form" class="login-card" hidden>
+    <div class="mark">f.</div><h1>Create your password</h1>
+    <p class="muted">Choose the local administrator password. This screen closes after setup is complete.</p>
+    <p class="small muted">For setup, join Wi-Fi <strong>furbo2</strong> with password <strong>furbo2setup</strong>. The device clock will use your browser’s time.</p>
+    <label>New password<input id="setup-password" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></label>
+    <label>Confirm password<input id="setup-confirm" type="password" minlength="12" maxlength="128" autocomplete="new-password" required></label>
+    <button class="primary">Save password</button><p id="setup-error" role="alert"></p>
+  </form>
+</div>
+<button id="menu-backdrop" class="menu-backdrop" aria-label="Close menu" hidden></button>
+<div id="shell" hidden>
+  <aside id="sidebar"><a class="brand" href="/">f. <span>Furbo Local</span></a>
+    <nav aria-label="Main"><button data-view="home" class="selected">Overview</button><button data-view="media">Recordings</button><button data-view="schedule">Feed times</button><button data-view="settings">Device settings</button><button data-view="connections" class="admin-only">Connections &amp; events</button><button data-view="admin" class="admin-only">Accounts &amp; network</button></nav>
+    <div class="aside-foot"><button id="logout" class="quiet">Sign out</button></div>
+  </aside>
+  <main>
+    <header><div><h1 id="page-title">Overview</h1></div><span id="device-name" hidden></span></header>
+    <div id="notice" role="status" hidden></div><div id="clock-warning" class="warning" hidden>The device clock needs setting. An administrator can sync it in Accounts &amp; network. Wi-Fi setup still works.</div>
+    <section data-page="home">
+      <div class="home-grid">
+        <article class="card camera-card"><div class="card-head"><h2>Live view</h2><span id="live-state" class="badge">OFF</span></div>
+          <div class="video-wrap"><video id="video" controls playsinline muted hidden></video><div id="camera-placeholder"><span class="camera-symbol">◉</span><p>Ready when you are</p><span>Start a private live view of your room.</span></div></div>
+          <div class="camera-toolbar"><button id="start-video" class="primary">Start live view</button><button id="stop-video">Stop</button><label class="inline"><input id="video-audio" type="checkbox"> Room audio</label><label class="inline">Zoom <input id="zoom" type="range" min="1" max="4" step=".25" value="1"></label></div>
+          <div class="button-row"><button id="snapshot" class="control">Take photo</button><button id="record-video" class="control">Record 10s video + audio</button><button id="device-record" class="control">Record 5s room audio</button><button id="talk" class="control">Record a voice message</button></div>
+          
+        </article>
+        <div class="side-stack">
+          <article class="card treat-card"><h2>Treat time</h2><p>One press. One toss.</p><button id="toss" class="primary control">Toss a treat</button><p class="small muted">Keep the treat path clear. 30s between tosses.</p><p id="last-feed" class="small"></p></article>
+          <article class="card"><div class="card-head"><h2>Room &amp; sound</h2><button id="read-lux" class="quiet">Refresh</button></div><div class="metric"><span id="lux">—</span><small>lux</small></div>
+            <label>Night vision<select id="night" class="control"><option value="auto">Automatic</option><option value="on">On</option><option value="off">Off</option></select></label>
+            <label>Speaker <span id="volume-value">25%</span><input id="volume" class="control" type="range" min="0" max="75" value="25"></label><label class="inline"><input id="mute" class="control" type="checkbox"> Mute speaker</label>
+          </article>
+        </div>
+      </div>
+      <article class="card activity"><div class="card-head"><h2>Recent activity</h2><span class="muted small">Device events</span></div><div id="event-list" class="rows"></div></article>
+    </section>
+    <section data-page="media" hidden><div class="section-heading"><p class="muted">Photos, video clips, and voice messages stored on your Furbo.</p><label class="upload">Upload PCM WAV<input id="voice-file" class="control" type="file" accept=".wav,audio/wav"></label></div><div id="media-list" class="rows card"></div></section>
+    <section data-page="schedule" hidden><article class="card"><h2>Make time for a treat</h2><p class="muted">Times follow <strong id="timezone">UTC</strong>. Each time runs once per local date, including daylight-saving changes. Missed times are skipped.</p>
+      <form id="schedule-form" class="form-row"><label>Time<input id="feed-time" type="time" value="08:00" required></label><label>Play a voice message<select id="schedule-voice"><option value="">None</option></select></label><fieldset id="days"><legend>Days</legend><label><input type="checkbox" value="0" checked>Mon</label><label><input type="checkbox" value="1" checked>Tue</label><label><input type="checkbox" value="2" checked>Wed</label><label><input type="checkbox" value="3" checked>Thu</label><label><input type="checkbox" value="4" checked>Fri</label><label><input type="checkbox" value="5" checked>Sat</label><label><input type="checkbox" value="6" checked>Sun</label></fieldset><button class="primary control">Add feed time</button></form></article><div id="schedule-list" class="card rows"></div></section>
+    <section data-page="settings" hidden><article class="card"><h2>Lighting</h2><div id="led-buttons" class="button-row"><button data-color="off" class="control">Off</button><button data-color="red" class="control">Red</button><button data-color="yellow" class="control">Yellow</button><button data-color="green" class="control">Green</button><button data-color="cyan" class="control">Cyan</button><button data-color="blue" class="control">Blue</button><button data-color="purple" class="control">Purple</button><button data-color="rgb" class="control">All colors</button></div><label class="inline"><input id="tunnel" type="checkbox" class="control"> Feeding tunnel lamp</label></article>
+      <article class="card"><h2>Camera image</h2><div class="form-row"><label>Setting<select id="image-setting"><option value="brightness">Brightness</option><option value="contrast">Contrast</option><option value="saturation">Saturation</option><option value="sharpness">Sharpness</option><option value="hue">Hue</option><option value="day_night">Day/night (0/1)</option><option value="anti_flicker">Anti-flicker (0: 50Hz, 1: 60Hz)</option></select></label><label>Value<input id="image-value" type="number" min="-2" max="2" value="0"></label><button id="apply-image" class="control">Apply</button></div></article><article class="card"><h2>Device health</h2><div id="stats-summary" class="stats-grid"></div><details><summary>All statistics (JSON)</summary><pre id="health"></pre></details></article></section>
+    <section data-page="admin" hidden>
+      <article class="card"><h2>Wi-Fi &amp; recovery</h2><p class="muted">A protected setup network appears if the stored Wi-Fi is unavailable for 90 seconds. The setup network is furbo2 / furbo2setup. A 10s rear-button hold requests recovery when the local network manager is installed. It clears saved Wi-Fi and local sign-in credentials; recordings stay on the device.</p><pre id="network-state"></pre><form id="wifi-form" class="form-row"><label>2.4 GHz Wi-Fi name<input id="wifi-ssid" maxlength="32" required autocomplete="off"></label><label>WPA2 password<input id="wifi-password" type="password" minlength="8" maxlength="64" required autocomplete="new-password"></label><button class="primary">Save &amp; connect</button></form><div id="wifi-confirm-panel" class="warning" hidden><p>New Wi-Fi is a trial. Confirm it within five minutes. Rebooting before confirmation restores the last confirmed network.</p><label>Transaction ID<input id="wifi-transaction" autocomplete="off"></label><button id="confirm-wifi" class="primary">Confirm Wi-Fi</button><button id="rollback-wifi">Roll back now</button></div><div class="button-row"><button id="recovery">Start recovery Wi-Fi</button><button id="sync-clock">Sync clock from this browser</button></div></article>
+      <article class="card"><h2>Local accounts</h2><form id="user-form" class="form-row"><label>Username<input id="new-username" pattern="[a-zA-Z0-9_-]+" maxlength="40" required></label><label>Password<input id="new-password" type="password" minlength="12" maxlength="128" required autocomplete="new-password"></label><label>Access<select id="new-role"><option value="viewer">View only</option><option value="operator">Device controls</option><option value="admin">Administrator</option></select></label><button class="primary">Create account</button></form><div id="user-list" class="rows"></div></article>
+      <article class="card"><h2>API keys</h2><p class="muted">Create a separate key for each integration. The full key is shown once.</p><form id="key-form" class="form-row"><label>Account<select id="key-user"></select></label><label>Key name<input id="key-name" maxlength="80" required></label><button>Create key</button></form><output id="new-key"></output><div id="key-list" class="rows"></div></article>
+    </section>
+
+    <section data-page="connections" hidden>
+      <form id="connection-form">
+        <article class="card"><h2>MQTT</h2><p class="muted small">Commands use cmnd, replies use stat, and events use tele/EVENT under your topic prefix.</p>
+          <div class="form-grid"><label class="inline"><input id="mqtt-enabled" type="checkbox">Enable MQTT</label><label class="inline"><input id="mqtt-tls" type="checkbox">Use TLS</label><label class="inline"><input id="mqtt-selfsigned" type="checkbox">Allow self-signed certificates</label>
+          <label>Broker host<input id="mqtt-host" maxlength="253"></label><label>Port<input id="mqtt-port" type="number" min="1" max="65535"></label>
+          <label>Username<input id="mqtt-username" autocomplete="off"></label><label>New broker password<input id="mqtt-password" type="password" autocomplete="new-password" placeholder="Leave blank to keep current"></label>
+          <label>Topic prefix<input id="mqtt-topic" maxlength="99"></label>
+          </div>
+        <details class="tls-options"><summary>Advanced TLS</summary><p class="small muted">Self-signed certificates are trusted on first connection and remembered. A changed certificate must be trusted again. Certificate names are still checked.</p><div class="form-grid"><label>TLS certificate name<input id="mqtt-cert-name" placeholder="Optional DNS name on certificate"></label><label class="wide">Broker CA certificate (PEM)<textarea id="mqtt-ca" rows="3" placeholder="Leave blank to keep current"></textarea></label></div></details></article>
+        <article class="card"><h2>HTTP &amp; HTTPS</h2><p id="listener-urls" class="endpoint-hint"></p><div class="form-grid">
+          <label>HTTP bind address<input id="http-listen" required placeholder="127.0.0.1:8080"></label><label class="inline"><input id="http-lan" type="checkbox">Enable HTTP</label>
+          <label class="inline"><input id="https-enabled" type="checkbox">Enable HTTPS</label><label>HTTPS bind address<input id="https-listen" placeholder="0.0.0.0:8443; blank disables HTTPS"></label><label>Request concurrency<input id="http-concurrency" type="number" min="1" max="32"></label>
+          
+        </div><p class="small muted">The installed certificate stays in use unless both replacement files are selected. Listener changes require reconnecting at the new address.</p><details class="tls-options"><summary>HTTPS certificates</summary><div class="form-grid"><label>Replace HTTPS certificate<input id="https-cert" type="file" accept=".pem,.crt"></label><label>Matching private key<input id="https-key" type="file" accept=".pem,.key"></label></div></details></article>
+        <article class="card"><h2>Media uploads</h2><label class="inline"><input id="endpoint-selfsigned" type="checkbox">Allow self-signed HTTPS certificates</label><p class="small muted">Upload URLs receive the original photos, videos, and audio files. Event notification URLs are configured below.</p>
+          <div class="form-grid">
+          <label>Media upload URL<input id="upload-url" type="url" placeholder="https://example.invalid/media"></label><label>New upload bearer token<input id="upload-token" type="password" autocomplete="new-password" placeholder="Leave blank to keep current"></label>
+          <label class="inline"><input id="auto-upload" type="checkbox">Automatically upload captures</label>
+          </div>
+        <details class="tls-options"><summary>Advanced HTTPS</summary><p class="small muted">Self-signed certificates are trusted on first connection and remembered. A changed certificate must be trusted again.</p><button id="forget-certs" type="button">Forget remembered certificates</button><div class="form-grid"><label class="wide">Callback/upload CA certificate (PEM)<textarea id="endpoint-ca" rows="3" placeholder="Leave blank to keep current"></textarea></label></div></details></article>
+        <article class="card"><h2>Events &amp; detection</h2><label>Event callback URL<input id="webhook-url" type="url" placeholder="https://example.invalid/events"></label><label class="inline"><input id="webhook-selfsigned" type="checkbox">Allow self-signed HTTPS certificates</label><label>Callback events<select id="webhook-filter"><option value="all">All events</option><option value="detection">Motion &amp; sound only</option><option value="media">Photos, video &amp; recordings only</option><option value="custom" hidden>Custom selection</option></select></label><details class="tls-options"><summary>Callback authentication</summary><label>New callback signing secret<input id="webhook-secret" type="password" minlength="32" autocomplete="new-password" placeholder="Leave blank to keep current"></label></details><p class="small muted">Local motion compares image samples; sound detection measures microphone level. Events go to your MQTT topic and event callback URL. This is not dog/person recognition.</p>
+          <div class="form-grid"><label class="inline"><input id="detect-motion" type="checkbox">Detect motion</label><label class="inline"><input id="detect-sound" type="checkbox">Detect sound</label>
+          <label>Motion threshold (0–1)<input id="motion-threshold" type="number" min="0" max="1" step=".01"></label><label>Sound threshold (0–1)<input id="sound-threshold" type="number" min="0" max="1" step=".01"></label>
+          <label>Check interval (seconds)<input id="detect-interval" type="number" min="5" max="3600"></label><label>Notification cooldown (seconds)<input id="detect-cooldown" type="number" min="5" max="86400"></label>
+          <label class="inline"><input id="detect-capture" type="checkbox">Take a photo when detected</label></div>
+        </article>
+        <article class="card"><h2>Recording retention</h2><p class="small muted">Oldest unprotected recordings are deleted when storage is low or a quota is reached. Scheduled voice messages and queued uploads are protected.</p>
+          <div class="form-grid"><label>Media quota (MiB)<input id="media-quota" type="number" min="1" max="64"></label><label>Maximum files<input id="media-files" type="number" min="1" max="128"></label>
+          <label>Delete after days (0 = never)<input id="media-days" type="number" min="0" max="3650"></label><label>Keep free space (MiB)<input id="media-free" type="number" min="0" max="64"></label></div>
+        </article>
+        <article class="card"><h2>Recovery watchdog</h2><p class="small muted">CPU must exceed its limit for the configured number of consecutive readings before a reboot. Factory crash and radio-fault checks remain enabled.</p><div class="form-grid"><label>Audio CPU limit (%)<input id="watchdog-audio" type="number" min="1" max="100"></label><label>RTSP CPU limit (%)<input id="watchdog-rtsp" type="number" min="1" max="100"></label><label>Consecutive high readings<input id="watchdog-readings" type="number" min="2" max="720"></label></div></article>
+        <article class="card"><h2>Camera label &amp; time</h2><div class="form-grid"><label>Stream label (blank removes logo)<input id="overlay-text" maxlength="24" placeholder="Optional label"></label><label class="inline"><input id="overlay-time" type="checkbox">Show timestamp in video</label><label>Timezone<input id="settings-timezone" required placeholder="Area/City"></label></div><p class="small muted">The camera font supports a short ASCII label. Interface language is selected separately.</p></article>
+        <div class="settings-actions"><button class="primary" type="submit">Save and apply</button><button id="download-log" type="button">Download RAM log (NDJSON)</button><span id="settings-result" role="status"></span></div>
+      </form>
+    </section>
+  </main>
+</div>
+<dialog id="preview"><button id="close-preview">Close</button><div id="preview-content"></div></dialog>
+</body></html>
