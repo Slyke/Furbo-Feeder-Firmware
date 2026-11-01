@@ -282,5 +282,6 @@
   "Save and apply": "保存并应用",
   "Default administrator": "默认管理员",
   "Enable HTTPS": "启用 HTTPS",
-  "Web listeners disabled. Use MQTT or hold reset for 10 seconds to restore access.": "网页监听已关闭。可通过 MQTT 或长按重置键 10 秒恢复访问。"
+  "Web listeners disabled. Use MQTT or hold reset for 10 seconds to restore access.": "网页监听已关闭。可通过 MQTT 或长按重置键 10 秒恢复访问。",
+  "Enter your username.": "请输入用户名。"
 }

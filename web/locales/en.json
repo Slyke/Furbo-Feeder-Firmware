@@ -303,5 +303,6 @@
   "Save and apply": "Save and apply",
   "Default administrator": "Default administrator",
   "Enable HTTPS": "Enable HTTPS",
-  "Web listeners disabled. Use MQTT or hold reset for 10 seconds to restore access.": "Web listeners disabled. Use MQTT or hold reset for 10 seconds to restore access."
+  "Web listeners disabled. Use MQTT or hold reset for 10 seconds to restore access.": "Web listeners disabled. Use MQTT or hold reset for 10 seconds to restore access.",
+  "Enter your username.": "Enter your username."
 }

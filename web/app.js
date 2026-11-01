@@ -1,5 +1,6 @@
 'use strict';
 const $=id=>document.getElementById(id);
+$('username').value=localStorage.getItem('furbo-last-username')||'';
 const t=(key,values)=>I18n.t(key,values);
 if(location.pathname==='/')history.replaceState({},'','/overview'+location.search);
 const pagePaths={home:'/overview',media:'/recordings',schedule:'/feed-times',settings:'/settings',connections:'/connections',admin:'/accounts'};
@@ -20,8 +21,8 @@ async function api(path,opts={},publicRequest=false){
 function disconnect(){stopVideo();if(state.recording)state.recording(true).catch(()=>{});closeMenu();document.body.dataset.authenticated='false';sessionStorage.removeItem('furbo-session');state.token='';state.principal=null;$('shell').hidden=true;$('login').hidden=false;$('password').value='';$('api-key').value='';}
 async function connect(resumeToken){
   const key=resumeToken||$('api-key').value.trim();state.token=key;
-  if(!key){const v=await api('/login',{method:'POST',body:{username:$('username').value,password:$('password').value}},true);state.token=v.token;state.setupOnly=!!v.setup_only;if(v.setup_only)notice('The clock is unset. Use Wi-Fi setup or sync the clock, then sign in again.');}
-  state.principal=await api('/me');sessionStorage.setItem('furbo-session',JSON.stringify({token:state.token,setupOnly:state.setupOnly}));$('password').value='';$('api-key').value='';
+  if(!key){if(!$('username').value.trim())throw new Error(t('Enter your username.'));const v=await api('/login',{method:'POST',body:{username:$('username').value.trim(),password:$('password').value}},true);state.token=v.token;state.setupOnly=!!v.setup_only;if(v.setup_only)notice('The clock is unset. Use Wi-Fi setup or sync the clock, then sign in again.');}
+  state.principal=await api('/me');localStorage.setItem('furbo-last-username',state.principal.username);$('username').value=state.principal.username;sessionStorage.setItem('furbo-session',JSON.stringify({token:state.token,setupOnly:state.setupOnly}));$('password').value='';$('api-key').value='';
   document.body.dataset.authenticated='true';$('login').hidden=true;$('shell').hidden=false;view(state.view,false);
   document.querySelectorAll('.admin-only').forEach(e=>e.hidden=state.principal.role!=='admin');
   document.querySelectorAll('.control').forEach(e=>e.disabled=state.principal.role==='viewer');
