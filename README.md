@@ -116,8 +116,6 @@ cargo build --release --target armv7-unknown-linux-musleabihf
 node --check web/app.js
 ```
 
-An optional GitHub Actions template is in [deploy/github-actions-check.yml](deploy/github-actions-check.yml). Copy it to .github/workflows/check.yml to enable hosted checks.
-
 Hardware validation is separate from simulation. A treat toss moves a motor; media tests capture the room. Keep private test outputs out of Git.
 
 ## Private material
