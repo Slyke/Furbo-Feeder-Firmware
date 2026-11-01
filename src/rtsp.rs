@@ -118,6 +118,14 @@ impl Depacketizer {
         Ok(())
     }
 }
+
+pub struct Fragment {
+    pub bytes: Vec<u8>,
+    pub track: u32,
+    pub duration: u32,
+    pub key: bool,
+}
+
 pub struct Session {
     io: BufReader<TcpStream>,
     seq: u32,
@@ -321,9 +329,12 @@ impl Session {
         Ok((headers, body))
     }
     pub async fn next(&mut self) -> Result<Vec<u8>> {
+        Ok(self.next_fragment().await?.bytes)
+    }
+    pub async fn next_fragment(&mut self) -> Result<Fragment> {
         tokio::time::timeout(Duration::from_secs(15), self.next_inner()).await?
     }
-    async fn next_inner(&mut self) -> Result<Vec<u8>> {
+    async fn next_inner(&mut self) -> Result<Fragment> {
         loop {
             if self.last_keepalive.elapsed() > Duration::from_secs(20) {
                 self.seq += 1;
@@ -363,14 +374,19 @@ impl Session {
                             "non-monotonic video timestamps; B frames unsupported"
                         );
                         self.fragment_seq += 1;
-                        return Ok(mp4::fragment(
-                            self.fragment_seq,
-                            1,
-                            prev.timestamp.wrapping_sub(self.video_base.unwrap()) as u64,
+                        return Ok(Fragment {
+                            bytes: mp4::fragment(
+                                self.fragment_seq,
+                                1,
+                                prev.timestamp.wrapping_sub(self.video_base.unwrap()) as u64,
+                                duration,
+                                prev.key,
+                                &prev.data,
+                            ),
+                            track: 1,
                             duration,
-                            prev.key,
-                            &prev.data,
-                        ));
+                            key: prev.key,
+                        });
                     }
                 }
             } else if channel == 2 && self.audio && self.video_base.is_some() {
@@ -389,14 +405,19 @@ impl Session {
                 let ts = u32::from_be_bytes(p[4..8].try_into()?);
                 let base = *self.audio_base.get_or_insert(ts);
                 self.fragment_seq += 1;
-                return Ok(mp4::fragment(
-                    self.fragment_seq,
-                    2,
-                    ts.wrapping_sub(base) as u64,
-                    1024,
-                    true,
-                    &p[i..i + size],
-                ));
+                return Ok(Fragment {
+                    bytes: mp4::fragment(
+                        self.fragment_seq,
+                        2,
+                        ts.wrapping_sub(base) as u64,
+                        1024,
+                        true,
+                        &p[i..i + size],
+                    ),
+                    track: 2,
+                    duration: 1024,
+                    key: true,
+                });
             }
         }
     }

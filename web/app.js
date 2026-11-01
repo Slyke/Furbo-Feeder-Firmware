@@ -4,7 +4,15 @@ $('username').value=localStorage.getItem('furbo-last-username')||'';
 const t=(key,values)=>I18n.t(key,values);
 if(location.pathname==='/')history.replaceState({},'','/overview'+location.search);
 const pagePaths={home:'/overview',media:'/recordings',schedule:'/feed-times',settings:'/settings',connections:'/connections',admin:'/accounts'};
-const state={token:'',principal:null,status:null,schedules:[],media:[],view:Object.keys(pagePaths).find(key=>pagePaths[key]===location.pathname)||'home',videoAbort:null,recording:null,previewUrl:null,setupOnly:false,videoWanted:false};
+const state={token:'',principal:null,status:null,schedules:[],media:[],view:Object.keys(pagePaths).find(key=>pagePaths[key]===location.pathname)||'home',videoAbort:null,videoHlsTicket:null,videoGeneration:0,videoRetryTimer:null,recording:null,previewUrl:null,setupOnly:false,videoWanted:false};
+function randomUuid(){
+  const bytes=new Uint8Array(16);
+  if(window.crypto&&typeof window.crypto.getRandomValues==='function')window.crypto.getRandomValues(bytes);
+  else for(let i=0;i<bytes.length;i++)bytes[i]=Math.floor(Math.random()*256);
+  bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+  const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+  return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
+}
 const node=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=t(String(text));if(cls)e.className=cls;return e;};
 const action=(label,fn)=>{const b=node('button',label);b.type='button';b.addEventListener('click',guard(fn));return b;};
 function notice(text){clearTimeout(state.noticeTimer);const close=action('×',()=>{$('notice').hidden=true;});close.setAttribute('aria-label',t('Dismiss'));$('notice').replaceChildren(node('span',text),close);$('notice').hidden=false;state.noticeTimer=setTimeout(()=>{$('notice').hidden=true;},7000);}
@@ -60,7 +68,7 @@ async function refresh(){
 }
 setInterval(()=>{if(state.token)refresh().catch(()=>{});},20000);
 async function command(actionBody){
-  const result=await api('/commands',{method:'POST',body:{id:crypto.randomUUID(),issued_at:Math.floor(Date.now()/1000),action:actionBody}});
+  const result=await api('/commands',{method:'POST',body:{id:randomUuid(),issued_at:Math.floor(Date.now()/1000),action:actionBody}});
   if(!result.ok)throw new Error(result.error||'Command failed');
   await refresh();return result.result;
 }
@@ -77,7 +85,24 @@ $('tunnel').addEventListener('change',guard(()=>command({type:'tunnel',on:$('tun
 document.querySelectorAll('[data-color]').forEach(b=>b.addEventListener('click',guard(()=>command({type:'led',color:b.dataset.color}))));
 $('apply-image').addEventListener('click',guard(()=>command({type:'image',setting:$('image-setting').value,value:Number($('image-value').value)})));
 $('zoom').addEventListener('input',()=>$('video').style.transform='scale('+$('zoom').value+')');
-function stopVideo(){state.videoWanted=false;state.videoAbort?.abort();state.videoAbort=null;$('video').hidden=true;$('video').pause();$('video').removeAttribute('src');$('video').load();$('camera-placeholder').hidden=false;$('live-state').textContent='OFF';}
+function closeHls(ticket){
+  if(!ticket||!state.token)return;
+  fetch('/api/v1/stream/hls/'+encodeURIComponent(ticket),{method:'DELETE',headers:{Authorization:'Bearer '+state.token},cache:'no-store'}).catch(()=>{});
+}
+function stopVideo(){
+  state.videoWanted=false;state.videoGeneration++;clearTimeout(state.videoRetryTimer);state.videoRetryTimer=null;
+  state.videoAbort?.abort();state.videoAbort=null;
+  const ticket=state.videoHlsTicket;state.videoHlsTicket=null;closeHls(ticket);
+  const video=$('video');video.onplaying=null;video.onloadeddata=null;video.onerror=null;video.onended=null;
+  video.hidden=true;video.pause();video.removeAttribute('src');video.load();
+  if('disableRemotePlayback' in video)video.disableRemotePlayback=false;
+  $('camera-placeholder').hidden=false;$('live-state').textContent='OFF';
+}
+function scheduleVideoRestart(generation,message){
+  if(generation!==state.videoGeneration||!state.videoWanted||!state.token||state.videoRetryTimer)return;
+  $('live-state').textContent='ENDED';if(message)notice(message);
+  state.videoRetryTimer=setTimeout(()=>{state.videoRetryTimer=null;if(generation===state.videoGeneration&&state.videoWanted&&state.token)startVideo().catch(e=>notice(e.message));},1000);
+}
 $('stop-video').addEventListener('click',stopVideo);
 $('start-video').addEventListener('click',guard(startVideo));
 $('video-audio').addEventListener('change',guard(async()=>{
@@ -88,27 +113,62 @@ $('video-audio').addEventListener('change',guard(async()=>{
   }
 }));
 async function startVideo(){
-  stopVideo();state.videoWanted=true;if(!window.MediaSource)throw new Error('This browser needs MediaSource support for H.264 live video.');
+  stopVideo();state.videoWanted=true;const generation=state.videoGeneration,video=$('video');
+  video.muted=!$('video-audio').checked;
+  if(video.canPlayType('application/vnd.apple.mpegurl'))return startHlsVideo(video,generation);
+  return startBufferedVideo(video,generation);
+}
+async function startHlsVideo(video,generation){
+  $('live-state').textContent='CONNECTING';
+  const setup=await api('/stream/hls?audio='+$('video-audio').checked,{method:'POST'});
+  if(generation!==state.videoGeneration||!state.videoWanted){closeHls(setup.ticket);return;}
+  state.videoHlsTicket=setup.ticket;
+  if('disableRemotePlayback' in video)video.disableRemotePlayback=false;
+  video.hidden=false;video.src=setup.url;video.muted=!$('video-audio').checked;
+  video.onloadeddata=()=>{if(generation===state.videoGeneration)$('camera-placeholder').hidden=true;};
+  video.onplaying=()=>{if(generation===state.videoGeneration){$('camera-placeholder').hidden=true;$('live-state').textContent='LIVE';}};
+  video.onerror=()=>scheduleVideoRestart(generation,'The live video connection ended. Reconnecting...');
+  video.onended=()=>scheduleVideoRestart(generation);
+  video.load();
+  try{await video.play();}catch{if(generation===state.videoGeneration)notice('Press play in the video controls to allow playback.');}
+}
+async function startBufferedVideo(video,generation){
+  const sources=[window.ManagedMediaSource,window.MediaSource].filter((value,index,list)=>value&&list.indexOf(value)===index);
+  if(!sources.length)throw new Error('This browser cannot play the live camera stream.');
   const controller=new AbortController();state.videoAbort=controller;
   const response=await api('/stream?audio='+$('video-audio').checked,{raw:true,signal:controller.signal});
-  const mime=response.headers.get('Content-Type');if(!MediaSource.isTypeSupported(mime))throw new Error('This browser cannot play '+mime+'. Use a browser with H.264/AAC MediaSource support.');
-  const source=new MediaSource();const url=URL.createObjectURL(source);$('video').hidden=false;$('video').src=url;$('video').muted=!$('video-audio').checked;
-  await new Promise(resolve=>source.addEventListener('sourceopen',resolve,{once:true}));URL.revokeObjectURL(url);
-  const buffer=source.addSourceBuffer(mime);const reader=response.body.getReader();$('camera-placeholder').hidden=true;$('live-state').textContent='LIVE';
-  const append=data=>new Promise((resolve,reject)=>{const done=()=>{buffer.removeEventListener('error',fail);resolve();};const fail=e=>{buffer.removeEventListener('updateend',done);reject(e);};buffer.addEventListener('updateend',done,{once:true});buffer.addEventListener('error',fail,{once:true});try{buffer.appendBuffer(data);}catch(e){buffer.removeEventListener('updateend',done);buffer.removeEventListener('error',fail);reject(e);}});
-  $('video').play().catch(()=>{if(!controller.signal.aborted)notice('Press play in the video controls to allow playback.');});
+  if(generation!==state.videoGeneration){controller.abort();return;}
+  const mime=response.headers.get('Content-Type');
+  const Source=sources.find(candidate=>typeof candidate.isTypeSupported==='function'&&candidate.isTypeSupported(mime));
+  if(!Source){controller.abort();throw new Error('This browser cannot play the camera video format.');}
+  if(Source===window.ManagedMediaSource&&'disableRemotePlayback' in video)video.disableRemotePlayback=true;
+  const source=new Source(),url=URL.createObjectURL(source),reader=response.body.getReader();
+  video.hidden=false;video.src=url;video.muted=!$('video-audio').checked;
+  video.onplaying=()=>{if(generation===state.videoGeneration)$('live-state').textContent='LIVE';};
   try{
+    await new Promise((resolve,reject)=>{
+      const opened=()=>{controller.signal.removeEventListener('abort',aborted);resolve();};
+      const aborted=()=>{source.removeEventListener('sourceopen',opened);const error=new Error('stream stopped');error.name='AbortError';reject(error);};
+      source.addEventListener('sourceopen',opened,{once:true});controller.signal.addEventListener('abort',aborted,{once:true});
+    });
+    URL.revokeObjectURL(url);
+    const buffer=source.addSourceBuffer(mime);$('camera-placeholder').hidden=true;$('live-state').textContent='LIVE';
+    const append=data=>new Promise((resolve,reject)=>{const done=()=>{buffer.removeEventListener('error',fail);resolve();};const fail=e=>{buffer.removeEventListener('updateend',done);reject(e);};buffer.addEventListener('updateend',done,{once:true});buffer.addEventListener('error',fail,{once:true});try{buffer.appendBuffer(data);}catch(e){buffer.removeEventListener('updateend',done);buffer.removeEventListener('error',fail);reject(e);}});
+    video.play().catch(()=>{if(!controller.signal.aborted)notice('Press play in the video controls to allow playback.');});
     while(!controller.signal.aborted){
       const {done,value}=await reader.read();if(done)break;
-      if(buffer.buffered.length&&$('video').currentTime>25){
-        buffer.remove(0,$('video').currentTime-15);await new Promise(resolve=>buffer.addEventListener('updateend',resolve,{once:true}));
+      if(buffer.buffered.length&&video.currentTime>25){
+        buffer.remove(0,video.currentTime-15);await new Promise(resolve=>buffer.addEventListener('updateend',resolve,{once:true}));
       }
       await append(value);
-      if(buffer.buffered.length){const end=buffer.buffered.end(buffer.buffered.length-1);if(end-$('video').currentTime>4)$('video').currentTime=Math.max(0,end-1);}
+      if(buffer.buffered.length){const end=buffer.buffered.end(buffer.buffered.length-1);if(end-video.currentTime>4)video.currentTime=Math.max(0,end-1);}
     }
     if(source.readyState==='open')source.endOfStream();
   }catch(e){if(e.name!=='AbortError')throw e;}
-  finally{reader.cancel().catch(()=>{});if(state.videoAbort===controller){state.videoAbort=null;$('live-state').textContent='ENDED';if(state.videoWanted&&state.token)setTimeout(()=>startVideo().catch(e=>notice(e.message)),1000);}}
+  finally{
+    URL.revokeObjectURL(url);reader.cancel().catch(()=>{});
+    if(state.videoAbort===controller){state.videoAbort=null;scheduleVideoRestart(generation);}
+  }
 }
 async function loadMedia(){
   state.media=await api('/media');const list=$('media-list');list.replaceChildren();
@@ -190,7 +250,7 @@ async function loadSchedules(){
   }
 }
 async function saveSchedules(){await api('/schedules',{method:'PUT',body:state.schedules});await loadSchedules();}
-$('schedule-form').addEventListener('submit',guard(async e=>{e.preventDefault();state.schedules.push({id:crypto.randomUUID().replaceAll('-','').slice(0,16),time:$('feed-time').value,days:[...$('days').querySelectorAll('input:checked')].map(e=>Number(e.value)),enabled:true,voice_id:$('schedule-voice').value||null});await saveSchedules();notice('Feed time saved.');}));
+$('schedule-form').addEventListener('submit',guard(async e=>{e.preventDefault();state.schedules.push({id:randomUuid().replace(/-/g,'').slice(0,16),time:$('feed-time').value,days:[...$('days').querySelectorAll('input:checked')].map(e=>Number(e.value)),enabled:true,voice_id:$('schedule-voice').value||null});await saveSchedules();notice('Feed time saved.');}));
 async function loadAdmin(){
   if(state.principal.role!=='admin')return;
   if(state.setupOnly){await loadNetwork();return;}

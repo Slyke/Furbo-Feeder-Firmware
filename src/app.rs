@@ -8,12 +8,58 @@ use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
-use tokio::sync::{broadcast, Mutex, Semaphore};
+use tokio::sync::{broadcast, Mutex, Notify, Semaphore};
+
+pub struct HlsSegment {
+    pub sequence: u64,
+    pub duration: f64,
+    pub bytes: Vec<u8>,
+}
+
+pub struct HlsState {
+    pub init: Vec<u8>,
+    pub segments: VecDeque<HlsSegment>,
+    pub ended: bool,
+    pub error: Option<String>,
+}
+
+pub struct HlsSession {
+    pub created: Instant,
+    pub state: Mutex<HlsState>,
+    pub changed: Notify,
+    pub cancelled: AtomicBool,
+    pub cancel: Notify,
+}
+
+impl HlsSession {
+    pub fn new(init: Vec<u8>) -> Self {
+        Self {
+            created: Instant::now(),
+            state: Mutex::new(HlsState {
+                init,
+                segments: VecDeque::with_capacity(6),
+                ended: false,
+                error: None,
+            }),
+            changed: Notify::new(),
+            cancelled: AtomicBool::new(false),
+            cancel: Notify::new(),
+        }
+    }
+
+    pub fn stop(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+        self.cancel.notify_waiters();
+    }
+}
 
 pub struct App {
     pub cfg: Config,
@@ -24,6 +70,7 @@ pub struct App {
     pub commands: Semaphore,
     pub passwords: Semaphore,
     pub streams: Arc<Semaphore>,
+    pub hls_sessions: Mutex<BTreeMap<String, Arc<HlsSession>>>,
     pub events: broadcast::Sender<Value>,
     pub recent: Mutex<VecDeque<Value>>,
     pub setup_tokens: Mutex<std::collections::BTreeMap<String, (Instant, String)>>,
@@ -72,6 +119,7 @@ impl App {
             commands: Semaphore::new(1),
             passwords: Semaphore::new(1),
             streams: Arc::new(Semaphore::new(2)),
+            hls_sessions: Mutex::new(BTreeMap::new()),
             events,
             recent: Mutex::new(VecDeque::with_capacity(128)),
             setup_tokens: Mutex::new(std::collections::BTreeMap::new()),

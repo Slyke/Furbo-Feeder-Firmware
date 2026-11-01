@@ -17,7 +17,11 @@ use crate::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{collections::BTreeSet, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeSet,
+    sync::{atomic::Ordering, Arc},
+    time::Duration,
+};
 pub struct Error(StatusCode, String);
 impl<E: Into<anyhow::Error>> From<E> for Error {
     fn from(e: E) -> Self {
@@ -78,6 +82,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/voice", put(voice).layer(DefaultBodyLimit::max(1_536_000)))
         .route("/listen", post(listen))
         .route("/stream", get(stream))
+        .route("/stream/hls", post(start_hls))
+        .route("/stream/hls/{ticket}", axum::routing::delete(stop_hls))
         .route("/users", get(users).post(add_user))
         .route("/users/{username}", put(update_user))
         .route("/keys", get(keys).post(add_key))
@@ -151,6 +157,12 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/v1/login", post(login))
         .route("/api/v1/setup/status", get(setup_status))
         .route("/api/v1/setup/password", post(setup_password))
+        .route("/api/v1/stream/hls/{ticket}/index.m3u8", get(hls_playlist))
+        .route("/api/v1/stream/hls/{ticket}/init.mp4", get(hls_init))
+        .route(
+            "/api/v1/stream/hls/{ticket}/segment/{sequence}",
+            get(hls_segment),
+        )
         .nest("/api/v1", protected)
         .layer(DefaultBodyLimit::max(8192))
         .layer(tower::limit::ConcurrencyLimitLayer::new(limit))
@@ -547,6 +559,238 @@ async fn stream(
     let body: Body = Body::from_stream(body);
     Ok(([(header::CONTENT_TYPE, mime)], body).into_response())
 }
+async fn start_hls(
+    State(app): State<Arc<App>>,
+    Query(options): Query<StreamOptions>,
+) -> Result<Json<Value>> {
+    ensure!(
+        !app.cfg.simulate,
+        "RTSP streaming is unavailable in simulation"
+    );
+    let permit = app
+        .streams
+        .clone()
+        .try_acquire_owned()
+        .context("two streams already active")?;
+    let session = crate::rtsp::Session::open(options.audio).await?;
+    let ticket = auth::random(24);
+    let hls = Arc::new(app::HlsSession::new(session.init.clone()));
+    {
+        let mut sessions = app.hls_sessions.lock().await;
+        sessions.retain(|_, existing| {
+            let keep = existing.created.elapsed() < Duration::from_secs(360);
+            if !keep {
+                existing.stop();
+            }
+            keep
+        });
+        ensure!(sessions.len() < 8, "too many recent HLS sessions");
+        sessions.insert(ticket.clone(), hls.clone());
+    }
+
+    let producer_app = app.clone();
+    let producer_ticket = ticket.clone();
+    let producer_hls = hls.clone();
+    tokio::spawn(async move {
+        produce_hls(producer_app, producer_ticket, producer_hls, session, permit).await;
+    });
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let changed = hls.changed.notified();
+        {
+            let state = hls.state.lock().await;
+            if state.segments.len() >= 3 || (state.ended && !state.segments.is_empty()) {
+                break;
+            }
+            if state.ended {
+                return Err(Error(
+                    StatusCode::BAD_GATEWAY,
+                    state
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "camera stream ended before video arrived".into()),
+                ));
+            }
+        }
+        if tokio::time::timeout_at(deadline, changed).await.is_err() {
+            hls.stop();
+            return Err(Error(
+                StatusCode::GATEWAY_TIMEOUT,
+                "camera did not produce an HLS segment in time".into(),
+            ));
+        }
+    }
+
+    Ok(Json(json!({
+        "ticket": ticket,
+        "url": format!("/api/v1/stream/hls/{ticket}/index.m3u8")
+    })))
+}
+
+async fn stop_hls(State(app): State<Arc<App>>, Path(ticket): Path<String>) -> Result<StatusCode> {
+    let session = app.hls_sessions.lock().await.remove(&ticket);
+    let Some(session) = session else {
+        return Err(Error(StatusCode::NOT_FOUND, "stream not found".into()));
+    };
+    session.stop();
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn produce_hls(
+    app: Arc<App>,
+    ticket: String,
+    hls: Arc<app::HlsSession>,
+    mut session: crate::rtsp::Session,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) {
+    let result: anyhow::Result<()> = async {
+        let started_at = std::time::Instant::now();
+        let mut started = false;
+        let mut sequence = 0u64;
+        let mut video_ticks = 0u64;
+        let mut bytes = Vec::new();
+        while started_at.elapsed() < Duration::from_secs(300)
+            && !hls.cancelled.load(Ordering::Relaxed)
+        {
+            let fragment = tokio::select! {
+                _ = hls.cancel.notified() => break,
+                result = session.next_fragment() => result?,
+            };
+            if fragment.track == 1 && fragment.key && started && video_ticks > 0 {
+                push_hls_segment(&hls, sequence, std::mem::take(&mut bytes), video_ticks).await;
+                sequence = sequence.saturating_add(1);
+                video_ticks = 0;
+            }
+            if !started {
+                if fragment.track != 1 || !fragment.key {
+                    continue;
+                }
+                started = true;
+            }
+            anyhow::ensure!(
+                bytes.len().saturating_add(fragment.bytes.len()) <= 4_194_304,
+                "HLS segment exceeded 4 MiB"
+            );
+            if fragment.track == 1 {
+                video_ticks = video_ticks.saturating_add(u64::from(fragment.duration));
+            }
+            bytes.extend(fragment.bytes);
+        }
+        if video_ticks > 0 && !bytes.is_empty() {
+            push_hls_segment(&hls, sequence, bytes, video_ticks).await;
+        }
+        Ok(())
+    }
+    .await;
+
+    {
+        let mut state = hls.state.lock().await;
+        if let Err(error) = result {
+            if !hls.cancelled.load(Ordering::Relaxed) {
+                state.error = Some(error.to_string());
+            }
+        }
+        state.ended = true;
+    }
+    hls.changed.notify_waiters();
+    drop(permit);
+
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    let mut sessions = app.hls_sessions.lock().await;
+    if sessions
+        .get(&ticket)
+        .is_some_and(|current| Arc::ptr_eq(current, &hls))
+    {
+        sessions.remove(&ticket);
+    }
+}
+
+async fn push_hls_segment(hls: &app::HlsSession, sequence: u64, bytes: Vec<u8>, video_ticks: u64) {
+    let mut state = hls.state.lock().await;
+    if state.segments.len() == 6 {
+        state.segments.pop_front();
+    }
+    state.segments.push_back(app::HlsSegment {
+        sequence,
+        duration: video_ticks as f64 / 90_000.0,
+        bytes,
+    });
+    drop(state);
+    hls.changed.notify_waiters();
+}
+
+async fn find_hls(app: &App, ticket: &str) -> Result<Arc<app::HlsSession>> {
+    app.hls_sessions
+        .lock()
+        .await
+        .get(ticket)
+        .filter(|session| session.created.elapsed() < Duration::from_secs(360))
+        .cloned()
+        .ok_or_else(|| Error(StatusCode::NOT_FOUND, "stream not found or expired".into()))
+}
+
+fn hls_playlist_text(state: &app::HlsState) -> String {
+    let target = state
+        .segments
+        .iter()
+        .map(|segment| segment.duration)
+        .fold(1.0f64, f64::max)
+        .ceil() as u64;
+    let first = state
+        .segments
+        .front()
+        .map(|segment| segment.sequence)
+        .unwrap_or(0);
+    let mut playlist = format!(
+        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:{}\n#EXT-X-MEDIA-SEQUENCE:{}\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-MAP:URI=\"init.mp4\"\n",
+        target.max(1),
+        first
+    );
+    for segment in &state.segments {
+        playlist.push_str(&format!(
+            "#EXTINF:{:.3},\nsegment/{}\n",
+            segment.duration, segment.sequence
+        ));
+    }
+    if state.ended {
+        playlist.push_str("#EXT-X-ENDLIST\n");
+    }
+    playlist
+}
+
+async fn hls_playlist(State(app): State<Arc<App>>, Path(ticket): Path<String>) -> Result<Response> {
+    let session = find_hls(&app, &ticket).await?;
+    let state = session.state.lock().await;
+    ensure!(!state.segments.is_empty(), "stream is still starting");
+    Ok((
+        [(header::CONTENT_TYPE, "application/vnd.apple.mpegurl")],
+        hls_playlist_text(&state),
+    )
+        .into_response())
+}
+
+async fn hls_init(State(app): State<Arc<App>>, Path(ticket): Path<String>) -> Result<Response> {
+    let session = find_hls(&app, &ticket).await?;
+    let init = session.state.lock().await.init.clone();
+    Ok(([(header::CONTENT_TYPE, "video/mp4")], init).into_response())
+}
+
+async fn hls_segment(
+    State(app): State<Arc<App>>,
+    Path((ticket, sequence)): Path<(String, u64)>,
+) -> Result<Response> {
+    let session = find_hls(&app, &ticket).await?;
+    let state = session.state.lock().await;
+    let bytes = state
+        .segments
+        .iter()
+        .find(|segment| segment.sequence == sequence)
+        .map(|segment| segment.bytes.clone())
+        .ok_or_else(|| Error(StatusCode::NOT_FOUND, "segment not found".into()))?;
+    Ok(([(header::CONTENT_TYPE, "video/iso.segment")], bytes).into_response())
+}
+
 async fn users(
     State(app): State<Arc<App>>,
     Extension(p): Extension<Principal>,
@@ -866,6 +1110,30 @@ mod integration_tests {
         path::PathBuf,
     };
     use tower::ServiceExt;
+    #[tokio::test]
+    async fn hls_playlist_has_init_map_rolling_window_and_end_marker() {
+        let session = app::HlsSession::new(vec![1, 2, 3]);
+        for sequence in 0..7 {
+            push_hls_segment(&session, sequence, vec![sequence as u8], 180_000).await;
+        }
+        {
+            let state = session.state.lock().await;
+            assert_eq!(state.segments.len(), 6);
+            assert_eq!(state.segments.front().unwrap().sequence, 1);
+            assert_eq!(state.init, vec![1, 2, 3]);
+            let playlist = hls_playlist_text(&state);
+            assert!(playlist.starts_with("#EXTM3U\n#EXT-X-VERSION:7\n"));
+            assert!(playlist.contains("#EXT-X-TARGETDURATION:2\n"));
+            assert!(playlist.contains("#EXT-X-MEDIA-SEQUENCE:1\n"));
+            assert!(playlist.contains("#EXT-X-MAP:URI=\"init.mp4\"\n"));
+            assert!(playlist.contains("#EXTINF:2.000,\nsegment/6\n"));
+            assert!(!playlist.contains("#EXT-X-ENDLIST"));
+        }
+        session.state.lock().await.ended = true;
+        let state = session.state.lock().await;
+        assert!(hls_playlist_text(&state).ends_with("#EXT-X-ENDLIST\n"));
+    }
+
     fn app() -> (Arc<App>, PathBuf) {
         let dir = std::env::temp_dir().join(format!("furbo-tests-{}", auth::random(9)));
         let mut cfg: crate::config::Config =
