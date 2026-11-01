@@ -7,7 +7,7 @@ This is a control layer on the existing Ambarella Linux firmware. It uses the fa
 ## Features
 
 - Independent HTTP and HTTPS listeners; either can be disabled. Reset restores both recovery listeners. TLS certificates can be locally signed.
-- Local accounts with viewer, operator, and administrator roles; Argon2id passwords, one-hour HS256 JWTs, revocable API keys.
+- Local accounts with viewer, operator, and administrator roles; Argon2id passwords, 30-day HS256 JWTs, revocable API keys.
 - MQTT over verified TLS, custom trust certificates, optional remembered self-signed trust, and optional client certificates.
 - Tasmota-style command, acknowledgment, and telemetry topics inside one configurable namespace.
 - Native 1080p H.264/AAC RTSP-to-fragmented-MP4 streaming. No FFmpeg or re-encoding on the device.
@@ -102,7 +102,7 @@ Feed times use bundled IANA tzdb **2026f**, independently of the old firmware's 
 
 Media has byte and file quotas, optional age expiry, and a minimum free-space reserve. Oldest unprotected files are removed first. Pending uploads and scheduled voice messages are protected from retention eviction; capture fails if protected files exhaust the quota. Video clips are capped at 30 seconds and 4 MiB. Downloaded clips carry finite duration metadata and a keyframe index for seeking. At most two video streams run concurrently; a stream reconnects every five minutes.
 
-The UI supports English and Simplified Chinese from JSON language files, with an optional initial ?lang=en-US or ?lang=zh-CN selection. Page navigation uses /overview, /recordings, /feed-times, /settings, /connections and /accounts. Light/dark selection and language preference are saved in the browser. A compact, locally served Chinese font subset is included under its [OFL license](web/fonts/OFL.txt), derived from [Noto Sans CJK](https://github.com/notofonts/noto-cjk). Password login lasts one hour from sign-in and survives page refresh within the current tab; signing out clears that session. The last successfully used username is remembered in local storage; passwords are not. The administrator can download a RAM-only NDJSON log (256 KiB maximum), cleared by a service restart.
+The UI supports English and Simplified Chinese from JSON language files, with an optional initial ?lang=en-US or ?lang=zh-CN selection. Page navigation uses /overview, /recordings, /feed-times, /settings, /connections and /accounts. Light/dark selection and language preference are saved in the browser. A compact, locally served Chinese font subset is included under its [OFL license](web/fonts/OFL.txt), derived from [Noto Sans CJK](https://github.com/notofonts/noto-cjk). Password login lasts 30 days from sign-in and survives page refresh within the current tab; signing out clears that session. The last successfully used username is remembered in local storage; passwords are not. The administrator can download a RAM-only NDJSON log (256 KiB maximum), cleared by a service restart.
 
 The recovery watchdog defaults to 50% CPU per audio/RTSP process and 24 consecutive high readings. Administrators can change these values through settings or MQTT; crash/radio-fault recovery stays active.
 

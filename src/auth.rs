@@ -47,6 +47,7 @@ pub fn random(n: usize) -> String {
     OsRng.fill_bytes(&mut bytes);
     B64.encode(bytes)
 }
+pub const SESSION_SECONDS: i64 = 30 * 24 * 60 * 60;
 fn argon() -> Argon2<'static> {
     // Bounded to 4 MiB on the 105 MiB target. Login is also globally throttled.
     Argon2::new(
@@ -107,12 +108,13 @@ pub fn issue_jwt(username: &str, user: &User, secret: &[u8], issuer: &str) -> Re
         "clock unset; set device time via SSH before logging in"
     );
     let h = B64.encode(br#"{"alg":"HS256","typ":"JWT"}"#);
+    let issued = now();
     let c = Claims {
         sub: username.to_owned(),
         iss: issuer.to_owned(),
         aud: "furbo-api".into(),
-        iat: now(),
-        exp: now() + 3600,
+        iat: issued,
+        exp: issued + SESSION_SECONDS,
         ver: user.version,
     };
     let data = format!("{}.{}", h, B64.encode(serde_json::to_vec(&c)?));
@@ -160,7 +162,7 @@ pub fn verify(token: &str, db: &Database, secret: &[u8], issuer: &str) -> Result
             && c.exp > now()
             && c.iat <= now() + 30
             && c.iat <= c.exp
-            && c.exp - c.iat <= 3600,
+            && c.exp.abs_diff(c.iat) <= SESSION_SECONDS as u64,
         "expired or invalid JWT"
     );
     let u = db.users.get(&c.sub).context("unknown account")?;
@@ -190,6 +192,10 @@ mod tests {
         assert!(!password_ok(&u, "incorrect"));
         let secret = b"01234567890123456789012345678901";
         let jwt = issue_jwt("admin", &u, secret, "unit").unwrap();
+        let claims: Claims =
+            serde_json::from_slice(&B64.decode(jwt.split('.').nth(1).unwrap()).unwrap()).unwrap();
+        assert_eq!(claims.exp - claims.iat, SESSION_SECONDS);
+
         assert_eq!(verify(&jwt, &db, secret, "unit").unwrap().role, Role::Admin);
         assert!(verify(&jwt, &db, secret, "other-device").is_err());
         assert!(verify(&(jwt + "x"), &db, secret, "unit").is_err());

@@ -324,7 +324,7 @@ async fn login(State(app): State<Arc<App>>, Json(input): Json<Login>) -> Result<
         &app.cfg.device_id,
     )?;
     Ok(Json(
-        json!({"token":token,"expires_in":3600,"token_type":"Bearer"}),
+        json!({"token":token,"expires_in":auth::SESSION_SECONDS,"token_type":"Bearer"}),
     ))
 }
 async fn me(Extension(p): Extension<Principal>) -> Json<Principal> {
@@ -853,7 +853,7 @@ async fn upgrade_session(
     let db = app.db.lock().await;
     let user = db.users.get(&p.username).context("account missing")?;
     Ok(Json(
-        json!({"token":auth::issue_jwt(&p.username,user,&app.secret.lock().await,&app.cfg.device_id)?,"expires_in":3600}),
+        json!({"token":auth::issue_jwt(&p.username,user,&app.secret.lock().await,&app.cfg.device_id)?,"expires_in":auth::SESSION_SECONDS}),
     ))
 }
 

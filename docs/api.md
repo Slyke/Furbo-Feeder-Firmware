@@ -16,7 +16,7 @@ Do not supply both. Tokens are not accepted in query strings. No cookie authenti
 | GET /healthz | Minimal process health |
 | GET /api/v1/setup/status | Whether initial/reset password creation is required |
 | POST /api/v1/setup/password | Create the administrator password once; recovery clients only |
-| POST /api/v1/login | Username/password to one-hour JWT |
+| POST /api/v1/login | Username/password to 30-day JWT |
 
 Setup body:
 
