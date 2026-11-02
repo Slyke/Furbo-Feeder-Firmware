@@ -230,6 +230,12 @@ impl App {
             }
             db.save(&self.cfg.data_dir)?;
         }
+        let description = cmd.action.description();
+        crate::logging::record(
+            "info",
+            "command_started",
+            json!({"id":cmd.id.clone(),"action":description.clone()}),
+        );
         let result = self.perform(&cmd.action, voice).await;
         let response = match result {
             Ok(v) => json!({"id":cmd.id,"ok":true,"result":v}),
@@ -242,11 +248,8 @@ impl App {
             }
             db.save(&self.cfg.data_dir)?;
         }
-        self.event(
-            "command",
-            json!({"action":cmd.action.description(),"response":response}),
-        )
-        .await;
+        self.event("command", json!({"action":description,"response":response}))
+            .await;
         Ok(response)
     }
     async fn perform(self: &Arc<Self>, action: &Action, voice: Option<String>) -> Result<Value> {
@@ -338,8 +341,8 @@ impl App {
                     )
                     .await?;
                 }
-                self.hw(Request::Toss, &[]).await?;
-                Ok(json!({"cycle_completed":true}))
+                let result = self.hw(Request::Toss, &[]).await?;
+                Ok(result.value)
             }
             Action::Led { color } => Ok(self
                 .hw(

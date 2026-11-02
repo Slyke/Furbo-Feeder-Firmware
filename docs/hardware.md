@@ -43,6 +43,10 @@ The internal RTSP server listens on loopback port 554. Its SDP identifies H.264 
 
 PIC scripts temporarily set ttyS0 to 9600 baud and restore 115200. They can interfere with a simultaneous serial-console session.
 
+The factory PIC helper is a write-only UART path: it transmits the command but does not read a reply or expose a motor-position sensor. A successful toss therefore confirms only that both UART helper invocations exited successfully, not that a treat physically moved. The hardware service records each helper's exit code, elapsed time, bounded stdout/stderr, and whether the UART write was accepted. It reports `controller_acknowledged: false` and `physical_completion_verified: false` rather than inventing an acknowledgment.
+
+The helper runs under a fail-fast shell so a failed baud change or UART write cannot be hidden by the final baud-restore command. Treat commands are never retried automatically: a retry after an uncertain result could produce a double toss.
+
 The native speaker path is `alsa_output.platform-sound.6.analog-stereo`. The service restores a persisted 25% default and caps normal API volume at 75%.
 
 The old PWM driver's accepted values do not match every documented duty value. Use the native cec_image control socket rather than writing arbitrary PWM levels. Its night enum is 0 auto, 1 off, 2 on. The Oryx test_image_service_air_api returned success without changing this device because its image service is absent.

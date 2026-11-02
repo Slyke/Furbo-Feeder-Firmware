@@ -1306,6 +1306,22 @@ mod integration_tests {
         .await
         .1;
         assert_eq!(first["ok"], true);
+        assert_eq!(first["result"]["command_sent"], true);
+        assert_eq!(first["result"]["controller_protocol"], "simulated");
+        assert_eq!(first["result"]["controller_acknowledged"], true);
+        assert_eq!(first["result"]["physical_completion_verified"], true);
+        let diagnostic_log = crate::logging::download();
+        let diagnostic_entries = diagnostic_log
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(diagnostic_entries.iter().any(|entry| {
+            entry["event"] == "command_started" && entry["details"]["id"] == "same-toss"
+        }));
+        assert!(diagnostic_entries.iter().any(|entry| {
+            entry["event"] == "command"
+                && entry["details"]["response"]["result"]["physical_completion_verified"] == true
+        }));
         let last_feed = app.db.lock().await.last_feed;
         let restarted = App::open(app.cfg.clone()).unwrap();
         let second = call(

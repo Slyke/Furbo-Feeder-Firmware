@@ -72,7 +72,7 @@ async function command(actionBody){
   if(!result.ok)throw new Error(result.error||'Command failed');
   await refresh();return result.result;
 }
-$('toss').addEventListener('click',guard(async()=>{if(confirm('Is the treat path clear? Toss one treat now?')){await command({type:'toss'});notice('Treat cycle completed.');}}));
+$('toss').addEventListener('click',guard(async()=>{if(confirm('Is the treat path clear? Toss one treat now?')){const result=await command({type:'toss'});notice(result.physical_completion_verified?'Treat cycle completed.':'Treat command sent. Physical completion is not reported by this controller.');}}));
 $('snapshot').addEventListener('click',guard(async()=>{notice('Taking a photo…');const r=await command({type:'capture',upload:false});await loadMedia();await preview(r);notice('Photo saved on the device.');}));
 $('record-video').addEventListener('click',guard(async()=>{notice('Recording video and room audio for up to 10 seconds…');await command({type:'video',seconds:10,upload:false});await loadMedia();notice('Video saved on the device.');}));
 $('device-record').addEventListener('click',guard(async()=>{notice('Recording the room microphone for 5 seconds…');await command({type:'record',seconds:5,upload:false});await loadMedia();notice('Room audio saved.');}));
@@ -313,7 +313,7 @@ setInterval(()=>{if(state.token&&!document.hidden)refreshLux().catch(()=>{});},5
 function activityTitle(event){
   const a=event.details?.action;
   if(!a)return t({capture:'Photo captured',audio_recording:'Room audio recorded',video_recording:'Video recorded',uploaded:'Media uploaded',motion:'Motion detected',sound:'Sound detected',retention:'Recording cleanup',command:'Device command'}[event.kind]||event.kind.replaceAll('_',' '));
-  const types={toss:'Treat tossed',led:'Indicator: {value}',night:'Night vision: {value}',volume:'Speaker: {value}%',mute:'Speaker mute: {value}',tunnel:'Tunnel lamp: {value}',image:'Camera setting: {value}',wifi_stage:'Wi-Fi trial started',wifi_confirm:'Wi-Fi confirmed',wifi_rollback:'Wi-Fi rolled back',set_schedules:'Feed times updated',delete_media:'Recording deleted',play:'Voice message played',upload:'Media upload queued',configure:'Settings updated'};
+  const types={toss:'Treat command sent',led:'Indicator: {value}',night:'Night vision: {value}',volume:'Speaker: {value}%',mute:'Speaker mute: {value}',tunnel:'Tunnel lamp: {value}',image:'Camera setting: {value}',wifi_stage:'Wi-Fi trial started',wifi_confirm:'Wi-Fi confirmed',wifi_rollback:'Wi-Fi rolled back',set_schedules:'Feed times updated',delete_media:'Recording deleted',play:'Voice message played',upload:'Media upload queued',configure:'Settings updated'};
   const value=a.color??a.mode??a.percent??(a.muted==null?(a.on==null?a.setting:(a.on?'On':'Off')):(a.muted?'On':'Off'));
   return t(types[a.type]||'Device command',{value:t(String(value??''))});
 }
@@ -324,13 +324,15 @@ function renderEvents(events){
   for(const event of visible){
     const response=event.details?.response||event.details;
     const failed=response?.ok===false;
+    const unverified=event.details?.action?.type==='toss'&&response?.ok===true&&response?.result?.physical_completion_verified===false;
     const row=node('div',undefined,'activity-row'),box=node('div',undefined,'activity-detail');
     const icon=node('span',event.kind==='capture'?'▧':event.kind.includes('recording')?'▷':failed?'!':'•','activity-icon');
     box.append(node('strong',activityTitle(event)),node('p',new Date(event.timestamp*1000).toLocaleString(I18n.locale)));
     if(failed)box.append(node('p',response.error||t('Command failed')));
+    else if(unverified)box.append(node('p','UART write accepted; the controller does not report physical completion.'));
     row.append(icon,box);
     if(event.details?.content_type&&event.details?.id)row.append(action('Open',()=>preview(event.details)));
-    else row.append(node('span',failed?'Failed':'Done','activity-result'+(failed?' failed':'')));
+    else row.append(node('span',failed?'Failed':unverified?'Sent':'Done','activity-result'+(failed?' failed':'')));
     list.append(row);
   }
 }

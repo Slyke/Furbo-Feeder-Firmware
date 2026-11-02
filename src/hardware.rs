@@ -222,16 +222,37 @@ pub async fn serve(socket: PathBuf, allowed_uid: u32, allowed_gid: u32) -> Resul
                     },
                     r.bytes,
                 ),
-                _ => (
-                    Header {
-                        ok: false,
-                        length: 0,
-                        content_type: String::new(),
-                        value: serde_json::Value::Null,
-                        error: Some("hardware request failed or limit exceeded".into()),
-                    },
-                    vec![],
-                ),
+                Ok(Err(error)) => {
+                    let message = diagnostic_text(format!("{error:#}").as_bytes());
+                    eprintln!("hardware request failed: {message}");
+                    (
+                        Header {
+                            ok: false,
+                            length: 0,
+                            content_type: String::new(),
+                            value: serde_json::Value::Null,
+                            error: Some(if message.is_empty() {
+                                "hardware request failed".into()
+                            } else {
+                                message
+                            }),
+                        },
+                        vec![],
+                    )
+                }
+                Err(_) => {
+                    eprintln!("hardware request timed out");
+                    (
+                        Header {
+                            ok: false,
+                            length: 0,
+                            content_type: String::new(),
+                            value: serde_json::Value::Null,
+                            error: Some("hardware request timed out".into()),
+                        },
+                        vec![],
+                    )
+                }
             };
             let _ = tokio::time::timeout(Duration::from_secs(5), async {
                 write_json(&mut stream, &h).await?;
@@ -251,9 +272,36 @@ fn chown(path: &Path, uid: u32, gid: u32) -> Result<()> {
     );
     Ok(())
 }
-async fn run(path: &str, args: &[&str]) -> Result<Vec<u8>> {
+struct FactoryOutput {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    elapsed_ms: u64,
+}
+fn diagnostic_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
+        .take(512)
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+fn factory_report(out: &FactoryOutput) -> serde_json::Value {
+    serde_json::json!({
+        "script_exit_code":out.status.code(),
+        "elapsed_ms":out.elapsed_ms,
+        "stdout":diagnostic_text(&out.stdout),
+        "stderr":diagnostic_text(&out.stderr),
+        "uart_write_accepted":out.status.success(),
+        "controller_acknowledged":false,
+        "physical_completion_verified":false
+    })
+}
+async fn command_output(path: &str, args: &[&str], timeout: Duration) -> Result<FactoryOutput> {
+    let started = std::time::Instant::now();
     let out = tokio::time::timeout(
-        Duration::from_secs(22),
+        timeout,
         Command::new(path)
             .args(args)
             .env("PULSE_SERVER", "unix:/var/run/pulse/native")
@@ -263,13 +311,39 @@ async fn run(path: &str, args: &[&str]) -> Result<Vec<u8>> {
             .output(),
     )
     .await??;
-    ensure!(out.status.success(), "factory command failed");
-    ensure!(out.stdout.len() < 65536, "unexpected factory output");
+    ensure!(
+        out.stdout.len() < 65536 && out.stderr.len() < 65536,
+        "unexpected factory output"
+    );
+    Ok(FactoryOutput {
+        status: out.status,
+        stdout: out.stdout,
+        stderr: out.stderr,
+        elapsed_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+    })
+}
+async fn run(path: &str, args: &[&str]) -> Result<Vec<u8>> {
+    let out = command_output(path, args, Duration::from_secs(22)).await?;
+    ensure!(
+        out.status.success(),
+        "factory command failed: {}",
+        factory_report(&out)
+    );
     Ok(out.stdout)
 }
-async fn pic(cmd: &str) -> Result<()> {
-    run("/usr/local/bin/cec_pic.sh", &[cmd]).await?;
-    Ok(())
+async fn pic(cmd: &str) -> Result<serde_json::Value> {
+    // The fixed wrapper makes a failed stty or UART write fail the request,
+    // while the EXIT trap restores the serial-console baud on every path.
+    let wrapper = "trap 'stty -F /dev/ttyS0 115200 >/dev/null 2>&1 || true' EXIT; . /usr/local/bin/cec_pic.sh";
+    let out = command_output(
+        "/bin/sh",
+        &["-ec", wrapper, "furbo-pic", cmd],
+        Duration::from_secs(10),
+    )
+    .await?;
+    let report = factory_report(&out);
+    ensure!(out.status.success(), "PIC UART write failed: {report}");
+    Ok(report)
 }
 async fn yuv() -> Result<PathBuf> {
     run(
@@ -355,15 +429,47 @@ async fn execute(request: Request, body: &[u8]) -> Result<Reply> {
                 .and_then(|s| s.parse::<i64>().ok())
                 .unwrap_or(0);
             ensure!(now() - last >= 30, "motor cooldown: 30 seconds");
-            crate::store::atomic_write(&path, now().to_string().as_bytes())?;
-            let result = pic("TF+Ls").await;
+            let attempted_at = now();
+            crate::store::atomic_write(&path, attempted_at.to_string().as_bytes())?;
+            let started = std::time::Instant::now();
+            eprintln!("treat cycle: sending motor UART command");
+            let motor = pic("TF+Ls").await;
             tokio::time::sleep(Duration::from_secs(5)).await;
-            let off = pic("TF+LT").await;
-            result?;
-            off?;
+            let lamp_off = pic("TF+LT").await;
+            match (motor, lamp_off) {
+                (Ok(motor_command), Ok(lamp_off_command)) => {
+                    let elapsed_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                    eprintln!(
+                        "treat cycle: UART writes completed in {elapsed_ms} ms; physical completion is not reported by the controller"
+                    );
+                    return Ok(empty(json!({
+                        "command_sent":true,
+                        "attempted_at":attempted_at,
+                        "cycle_elapsed_ms":elapsed_ms,
+                        "controller_protocol":"write_only",
+                        "controller_acknowledged":false,
+                        "physical_completion_verified":false,
+                        "motor_command":motor_command,
+                        "lamp_off_command":lamp_off_command
+                    })));
+                }
+                (Err(motor), Ok(_)) => {
+                    anyhow::bail!("motor UART command failed: {motor:#}")
+                }
+                (Ok(_), Err(lamp_off)) => {
+                    anyhow::bail!(
+                        "motor UART write succeeded but lamp-off UART command failed: {lamp_off:#}"
+                    )
+                }
+                (Err(motor), Err(lamp_off)) => {
+                    anyhow::bail!(
+                        "motor UART command failed: {motor:#}; lamp-off UART command failed: {lamp_off:#}"
+                    )
+                }
+            }
         }
-        Request::Led { color } => pic(color.pic()).await?,
-        Request::Tunnel { on } => pic(if on { "TF+Lt" } else { "TF+LT" }).await?,
+        Request::Led { color } => return Ok(empty(pic(color.pic()).await?)),
+        Request::Tunnel { on } => return Ok(empty(pic(if on { "TF+Lt" } else { "TF+LT" }).await?)),
         Request::Overlay {
             label,
             show_timestamp,
@@ -690,6 +796,21 @@ fn simulated(request: Request, body: &[u8]) -> Result<Reply> {
         Request::AuthState => Ok(empty(
             json!({"setup_required":false,"generation":null,"recovery_active":true,"simulated":true}),
         )),
+        Request::Toss => Ok(empty(json!({
+            "command_sent":true,
+            "attempted_at":now(),
+            "cycle_elapsed_ms":0,
+            "controller_protocol":"simulated",
+            "controller_acknowledged":true,
+            "physical_completion_verified":true,
+            "motor_command":{
+                "script_exit_code":0,
+                "elapsed_ms":0,
+                "uart_write_accepted":true
+            },
+            "lamp_off_command":{"script_exit_code":0,"elapsed_ms":0,"uart_write_accepted":true},
+            "simulated":true
+        }))),
         Request::Record { seconds } => {
             ensure!((1..=15).contains(&seconds), "invalid seconds");
             Ok(Reply {
@@ -742,5 +863,17 @@ mod tests {
         let mut b = silent_wav(1);
         b[20] = 3;
         assert!(validate_wav(&b).is_err());
+    }
+
+    #[test]
+    fn diagnostic_output_is_safe_and_bounded() {
+        let text = diagnostic_text(b"  ok\0\x1b[31m\nnext\t  ");
+        assert_eq!(text, "ok[31m\nnext");
+        assert!(!text.chars().any(|character| {
+            character.is_control() && !matches!(character, '\n' | '\r' | '\t')
+        }));
+
+        let long = diagnostic_text(&vec![b'x'; 600]);
+        assert_eq!(long.chars().count(), 512);
     }
 }

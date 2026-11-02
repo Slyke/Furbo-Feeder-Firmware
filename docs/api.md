@@ -104,6 +104,8 @@ On firmware with that service, image values are -2…2 for brightness, contrast,
 
 Motor cooldown is 30 seconds. Commands are serialized and limited to 64 per minute. Unknown fields are rejected.
 
+A successful toss result includes `command_sent`, `attempted_at`, `cycle_elapsed_ms`, `controller_protocol`, `controller_acknowledged`, `physical_completion_verified`, and separate `motor_command` and `lamp_off_command` reports. Each report includes the helper exit code, elapsed time, bounded stdout/stderr, and `uart_write_accepted`. The factory protocol is write-only, so a normal device result has `controller_acknowledged: false` and `physical_completion_verified: false`; it proves command delivery to the UART helper, not physical treat movement.
+
 ## Wi-Fi transaction
 
 `PUT /network`:
@@ -169,7 +171,7 @@ camera.overlay_text is blank to hide the logo, or a short ASCII label (24 bytes 
 
 watchdog.audio_cpu_percent, rtsp_cpu_percent (1–100) and consecutive_readings (2–720) configure CPU-triggered recovery. Defaults are 50, 50 and 24; the factory comparison is adjusted so the configured count is exact. The legacy monitor must load the generated root-only threshold file as described in deployment.
 
-The log is NDJSON, bounded to 256 KiB/1024 entries in RAM. It records actions/results and runtime errors, with structured secret fields redacted. Request bodies, passwords and private keys are not diagnostic payloads. It clears on process restart.
+The log is NDJSON, bounded to 256 KiB/1024 entries in RAM. It records `command_started` before execution, the completed action/result, controller diagnostics, and runtime errors, with structured secret fields redacted. This distinguishes a click that reached the API from a helper failure. Request bodies, passwords and private keys are not diagnostic payloads. It clears on process restart.
 
 
 HTTP callback/upload URLs are accepted directly. allow_insecure_http is a legacy ignored input; no separate permission switch is needed. Media.allow_self_signed applies to uploads; webhook_allow_self_signed applies to event callbacks. MQTT has its own allow_self_signed flag.
